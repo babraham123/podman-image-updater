@@ -1,0 +1,27 @@
+#!/bin/sh
+# Fake skopeo. inspect prints the digest in $FAKE/digest/<ref key>, or fails without one;
+# copy to oci: makes the directory (fails if $FAKE/fail_download exists); copy to
+# containers-storage: tags the image, recording the source it came from.
+echo "skopeo $*" >> "$FAKE/calls"
+key() { printf %s "$1" | tr '/:@' '___'; }
+cmd=$1
+shift
+while [ "${1#-}" != "$1" ]; do
+  case $1 in
+    --authfile) cp "$2" "$FAKE/authfile"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+case $cmd in
+  inspect)
+    f="$FAKE/digest/$(key "${1#docker://}")"
+    [ -f "$f" ] || exit 1
+    printf '{"Digest": "%s"}\n' "$(cat "$f")"
+    ;;
+  copy)
+    case $2 in
+      oci:*) [ ! -e "$FAKE/fail_download" ] || exit 1; mkdir -p "${2#oci:}" ;;
+      containers-storage:*) echo "$1" > "$FAKE/images/$(key "${2#containers-storage:}")" ;;
+    esac
+    ;;
+esac

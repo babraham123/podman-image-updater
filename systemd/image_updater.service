@@ -1,0 +1,16 @@
+# /etc/systemd/system/image_updater.service
+
+[Unit]
+Description=Checks, scans and applies container image updates
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+# Not oneshot: a oneshot start job fired during boot stays queued until the script ends,
+# and the script waits for boot to finish. The script does its own boot wait.
+Type=exec
+ExecStart=/usr/local/bin/image_updater
+
+# Backstop only. Set deadline_s in the config so the script stops starting images first,
+# since a killed podman auto-update can leave a unit stopped.
+RuntimeMaxSec=90min

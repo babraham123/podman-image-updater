@@ -1,0 +1,15 @@
+# /etc/systemd/system/image_updater.timer
+# Hosts that share a notification path: give each its own slot, the one running the
+# notification path last, with an OnCalendar= drop-in in image_updater.timer.d/.
+
+[Unit]
+Description=Runs image_updater.service every night
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+# Run if the machine was off
+Persistent=true
+Unit=image_updater.service
+
+[Install]
+WantedBy=timers.target

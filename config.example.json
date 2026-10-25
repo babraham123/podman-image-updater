@@ -1,0 +1,35 @@
+{
+  "images": [
+    {
+      "service": "web",
+      "container": "nginx",
+      "image": "localhost/library/nginx:stable",
+      "upstream": "docker.io/library/nginx:stable",
+      "trivyignore": "/etc/image_updater/trivyignore/web"
+    },
+    {
+      "service": "app",
+      "container": "app",
+      "image": "localhost/app:latest",
+      "build": "app",
+      "build_script": "/opt/app/build.sh"
+    },
+    {
+      "service": "notify",
+      "container": "ntfy",
+      "image": "localhost/binwiederhier/ntfy:latest",
+      "upstream": "docker.io/binwiederhier/ntfy:latest"
+    }
+  ],
+  "ntfy": {
+    "url": "https://ntfy.example.com/alerts",
+    "token": {"file": "/etc/image_updater/ntfy_token"}
+  },
+  "registry_auth": {
+    "docker.io": {
+      "username": {"env": "DOCKER_HUB_USERNAME"},
+      "password": {"command": ["/usr/local/bin/get_secret", "docker_hub_token"]}
+    }
+  },
+  "deadline_s": 1500
+}

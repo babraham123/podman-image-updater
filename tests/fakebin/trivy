@@ -1,0 +1,17 @@
+#!/bin/sh
+# Fake trivy. A DB download exits with $FAKE/db_rc, default 0. A scan writes
+# $FAKE/report.json, default no findings, as its report and exits with $FAKE/rc, default 0.
+echo "trivy $*" >> "$FAKE/calls"
+case " $* " in
+  *" --download-"*) exit "$(cat "$FAKE/db_rc" 2> /dev/null || echo 0)" ;;
+esac
+while [ $# -gt 0 ]; do
+  [ "$1" = --output ] && output=$2
+  shift
+done
+if [ -f "$FAKE/report.json" ]; then
+  cp "$FAKE/report.json" "$output"
+else
+  echo '{"Results": []}' > "$output"
+fi
+exit "$(cat "$FAKE/rc" 2> /dev/null || echo 0)"

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Fake systemctl: the system is running and every unit is active.
+echo "systemctl $*" >> "$FAKE/calls"
+[ "$1" != is-system-running ] || echo running
