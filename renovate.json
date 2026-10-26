@@ -8,6 +8,8 @@
     "before 6am on monday"
   ],
   "minimumReleaseAge": "3 days",
+  "osvVulnerabilityAlerts": true,
+  "dependencyDashboardOSVVulnerabilitySummary": "unresolved",
   "customManagers": [
     {
       "customType": "regex",
