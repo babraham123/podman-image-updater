@@ -70,8 +70,11 @@ class Result(Exception):
 
 
 def log(message, stream=None):
-  print(f"{datetime.now().astimezone().isoformat(timespec='seconds')} {message}",
-        file=stream or sys.stdout, flush=True)
+  print(
+    f"{datetime.now().astimezone().isoformat(timespec='seconds')} {message}",
+    file=stream or sys.stdout,
+    flush=True,
+  )
 
 
 def warn(message):
@@ -84,8 +87,13 @@ def die(message):
 
 def run(*cmd, check=True, capture=False, **kwargs):
   """Runs cmd, its output to the journal unless captured; raises on failure if check."""
-  return subprocess.run([str(c) for c in cmd], check=check, text=True,
-                        stdout=subprocess.PIPE if capture else None, **kwargs)
+  return subprocess.run(
+    [str(c) for c in cmd],
+    check=check,
+    text=True,
+    stdout=subprocess.PIPE if capture else None,
+    **kwargs,
+  )
 
 
 def ok(*cmd):
@@ -95,10 +103,16 @@ def ok(*cmd):
 def check_secret(spec, where):
   if spec is None:
     return
-  if not (isinstance(spec, dict) and len(spec) == 1
-          and (isinstance(spec.get("env"), str) or isinstance(spec.get("file"), str)
-               or (isinstance(spec.get("command"), list) and spec["command"]))):
-    die(f"{where}: a secret is {{\"env\": NAME}}, {{\"file\": PATH}} or {{\"command\": [ARGV...]}}")
+  if not (
+    isinstance(spec, dict)
+    and len(spec) == 1
+    and (
+      isinstance(spec.get("env"), str)
+      or isinstance(spec.get("file"), str)
+      or (isinstance(spec.get("command"), list) and spec["command"])
+    )
+  ):
+    die(f'{where}: a secret is {{"env": NAME}}, {{"file": PATH}} or {{"command": [ARGV...]}}')
 
 
 def check_image(entry, where):
@@ -111,8 +125,15 @@ def check_image(entry, where):
     die(f"{where}: needs one of upstream or build")
   if "build" in entry and not isinstance(entry.get("build_script"), str):
     die(f"{where}: a build image needs build_script")
-  unknown = set(entry) - {"service", "container", "image", "upstream", "build", "build_script",
-                          "trivyignore"}
+  unknown = set(entry) - {
+    "service",
+    "container",
+    "image",
+    "upstream",
+    "build",
+    "build_script",
+    "trivyignore",
+  }
   if unknown:
     die(f"{where}: unknown keys {', '.join(sorted(unknown))}")
 
@@ -196,8 +217,15 @@ def notify(priority, title, message):
     return
   # A person running install or accept is waiting; only the timer may be up before ntfy is
   attempts = 9 if mode == "run" else 1
-  if not ntfy_post(cfg["ntfy"]["url"], secret(cfg["ntfy"].get("token")), priority,
-                   f"{host}: {title}", message, cfg["ntfy"].get("tags", "package"), attempts):
+  if not ntfy_post(
+    cfg["ntfy"]["url"],
+    secret(cfg["ntfy"].get("token")),
+    priority,
+    f"{host}: {title}",
+    message,
+    cfg["ntfy"].get("tags", "package"),
+    attempts,
+  ):
     warn(f"ntfy post failed: {title}")
 
 
@@ -221,19 +249,40 @@ def registry_auth():
 # A scan never runs against a stale database: the caller fails when this does.
 def trivy_refresh():
   cache = cfg["trivy_cache"]
-  return (ok("trivy", "image", "--quiet", "--cache-dir", cache, "--download-db-only")
-          and ok("trivy", "image", "--quiet", "--cache-dir", cache, "--download-java-db-only"))
+  return ok("trivy", "image", "--quiet", "--cache-dir", cache, "--download-db-only") and ok(
+    "trivy", "image", "--quiet", "--cache-dir", cache, "--download-java-db-only"
+  )
 
 
 def scan(entry, source, report):
   """Exit 0 passes, 3 has findings, anything else is an error."""
   ignore = entry.get("trivyignore")
-  return run("trivy", "image", "--quiet", "--cache-dir", cfg["trivy_cache"], "--cache-backend",
-             "memory", "--skip-db-update", "--skip-java-db-update", "--scanners", "vuln",
-             "--severity", "HIGH,CRITICAL", "--ignore-unfixed", "--exit-code", "3",
-             "--format", "json", "--output", report,
-             *(["--ignorefile", ignore] if ignore and Path(ignore).is_file() else []),
-             "--input", source, check=False).returncode
+  return run(
+    "trivy",
+    "image",
+    "--quiet",
+    "--cache-dir",
+    cfg["trivy_cache"],
+    "--cache-backend",
+    "memory",
+    "--skip-db-update",
+    "--skip-java-db-update",
+    "--scanners",
+    "vuln",
+    "--severity",
+    "HIGH,CRITICAL",
+    "--ignore-unfixed",
+    "--exit-code",
+    "3",
+    "--format",
+    "json",
+    "--output",
+    report,
+    *(["--ignorefile", ignore] if ignore and Path(ignore).is_file() else []),
+    "--input",
+    source,
+    check=False,
+  ).returncode
 
 
 def vulnerabilities(report):
@@ -244,8 +293,11 @@ def vulnerabilities(report):
 
 def findings(report):
   for target, v in vulnerabilities(report):
-    print(f"{v.get('Severity')} {v.get('VulnerabilityID')} {v.get('PkgName')} "
-          f"{v.get('InstalledVersion')} -> {v.get('FixedVersion')} ({target})", flush=True)
+    print(
+      f"{v.get('Severity')} {v.get('VulnerabilityID')} {v.get('PkgName')} "
+      f"{v.get('InstalledVersion')} -> {v.get('FixedVersion')} ({target})",
+      flush=True,
+    )
 
 
 def last_digest(container):
@@ -300,14 +352,20 @@ def blocked(entry, key, report):
     ids = sorted({v.get("VulnerabilityID") for _, v in vulnerabilities(report)})
     ids = ", ".join(ids[:10]) + (", …" if len(ids) > 10 else "")
     if days < 7:
-      notify(3, f"{container} update blocked",
-             f"{key} has fixable HIGH/CRITICAL CVEs: {ids}. The old image keeps running.")
+      notify(
+        3,
+        f"{container} update blocked",
+        f"{key} has fixable HIGH/CRITICAL CVEs: {ids}. The old image keeps running.",
+      )
     else:
       ignore = entry.get("trivyignore")
       where = f"to {ignore} with an exp: date, or" if ignore else "to a trivyignore file, or"
-      notify(5, f"{container} blocked for {days} days",
-             f"{key} has fixable HIGH/CRITICAL CVEs: {ids}. To override after review, add them "
-             f"{where} on {host} run: {accept_command(container)}")
+      notify(
+        5,
+        f"{container} blocked for {days} days",
+        f"{key} has fixable HIGH/CRITICAL CVEs: {ids}. To override after review, add them "
+        f"{where} on {host} run: {accept_command(container)}",
+      )
   elif mode == "install":
     log(f"after review, to override: {accept_command(container)}, then install again")
 
@@ -382,9 +440,12 @@ def roll_out(container, image, key):
   if not ok("systemctl", "is-active", "--quiet", f"{container}.service"):
     ok("systemctl", "restart", f"{container}.service")
   record(container, key, "failed")
-  notify(4, f"{container} update failed",
-         f"{key} didn't start (auto-update: {updated}); back on the previous image. "
-         "Not retried until upstream changes.")
+  notify(
+    4,
+    f"{container} update failed",
+    f"{key} didn't start (auto-update: {updated}); back on the previous image. "
+    "Not retried until upstream changes.",
+  )
   raise Result("failed", f"update failed ({updated}); rolled back")
 
 
@@ -396,7 +457,9 @@ def upstream_digest(upstream):
 def download(upstream, digest, oci_dir):
   """By digest, so what's scanned is what the inspect saw even if the tag moves meanwhile."""
   shutil.rmtree(oci_dir, ignore_errors=True)
-  run("skopeo", "copy", "--quiet", *auth, f"docker://{untagged(upstream)}@{digest}", f"oci:{oci_dir}")
+  run(
+    "skopeo", "copy", "--quiet", *auth, f"docker://{untagged(upstream)}@{digest}", f"oci:{oci_dir}"
+  )
 
 
 def check_upstream(entry):
@@ -474,9 +537,12 @@ def wait_for_boot():
   otherwise hold boot open while its unit waits on it."""
   status = run("systemctl", "is-system-running", "--wait", check=False, capture=True).stdout.strip()
   if status == "degraded":
-    failed = run("systemctl", "list-units", "--failed", "--plain", "--no-legend",
-                 check=False, capture=True).stdout
-    warn(f"system degraded, failed units: {' '.join(line.split()[0] for line in failed.splitlines() if line)}")
+    failed = run(
+      "systemctl", "list-units", "--failed", "--plain", "--no-legend", check=False, capture=True
+    ).stdout
+    warn(
+      f"system degraded, failed units: {' '.join(line.split()[0] for line in failed.splitlines() if line)}"
+    )
   elif status != "running":
     die(f"system is {status}")
   if not cfg["boot_delay_s"]:
@@ -496,19 +562,27 @@ def write_metrics(clean, count):
   name = "image_updater_last_success_timestamp_seconds"
   last = None
   if metrics.exists():
-    last = next((line.split()[1] for line in metrics.read_text().splitlines()
-                 if line.split()[:1] == [name]), None)
+    last = next(
+      (line.split()[1] for line in metrics.read_text().splitlines() if line.split()[:1] == [name]),
+      None,
+    )
   if clean:
     last = int(time.time())
-  lines = [f"# HELP {name} Unix time of the last image_updater run with no broken or erroring image.",
-           f"# TYPE {name} gauge"]
+  lines = [
+    f"# HELP {name} Unix time of the last image_updater run with no broken or erroring image.",
+    f"# TYPE {name} gauge",
+  ]
   if last is not None:
     lines.append(f"{name} {last}")
-  lines += ["# HELP image_updater_images Images in the last image_updater run, by result.",
-            "# TYPE image_updater_images gauge"]
+  lines += [
+    "# HELP image_updater_images Images in the last image_updater run, by result.",
+    "# TYPE image_updater_images gauge",
+  ]
   lines += [f'image_updater_images{{result="{r}"}} {n}' for r, n in count.items()]
-  lines += ["# HELP image_updater_blocked_days Days since the scan gate first blocked the container's update.",
-            "# TYPE image_updater_blocked_days gauge"]
+  lines += [
+    "# HELP image_updater_blocked_days Days since the scan gate first blocked the container's update.",
+    "# TYPE image_updater_blocked_days gauge",
+  ]
   for marker in sorted(state.glob("*.blocked")):
     days = (int(time.time()) - int(marker.read_text())) // 86400
     lines.append(f'image_updater_blocked_days{{container="{marker.stem}"}} {days}')
@@ -532,7 +606,9 @@ def finish(clean, count):
 def update_all():
   global auth
   dry = mode == "dry-run"
-  count = Counter({k: 0 for k in ("checked", "updated", "blocked", "failed", "error", "broken", "deferred")})
+  count = Counter(
+    {k: 0 for k in ("checked", "updated", "blocked", "failed", "error", "broken", "deferred")}
+  )
   if not dry:
     wait_for_boot()
   auth = registry_auth()
@@ -568,7 +644,9 @@ def update_all():
   if not ok("podman", "image", "prune", "-f"):
     warn("image prune failed")
   if broken:
-    notify(5, "Image updater broken", f"Failed on: {' '.join(broken)}. See journalctl -u image_updater.")
+    notify(
+      5, "Image updater broken", f"Failed on: {' '.join(broken)}. See journalctl -u image_updater."
+    )
     finish(False, count)
   finish(True, count)
 
@@ -631,15 +709,26 @@ def accept(container):
 
 def parse_args(argv):
   parser = argparse.ArgumentParser(
-    prog="image_updater", description="Podman image updates behind a Trivy scan gate.")
-  parser.add_argument("--config", default=os.environ.get("IMAGE_UPDATER_CONFIG", DEFAULT_CONFIG),
-                      help=f"config file (default: $IMAGE_UPDATER_CONFIG, then {DEFAULT_CONFIG})")
-  parser.add_argument("--host", help="the config's hosts entry to use (default: the short hostname)")
-  parser.add_argument("--dry-run", action="store_true",
-                      help="check and scan every image; load and restart nothing")
-  parser.add_argument("command", nargs="?", choices=("install", "accept"),
-                      help="install SERVICE: load and gate its images; "
-                           "accept CONTAINER: pass its current image past the gate")
+    prog="image_updater", description="Podman image updates behind a Trivy scan gate."
+  )
+  parser.add_argument(
+    "--config",
+    default=os.environ.get("IMAGE_UPDATER_CONFIG", DEFAULT_CONFIG),
+    help=f"config file (default: $IMAGE_UPDATER_CONFIG, then {DEFAULT_CONFIG})",
+  )
+  parser.add_argument(
+    "--host", help="the config's hosts entry to use (default: the short hostname)"
+  )
+  parser.add_argument(
+    "--dry-run", action="store_true", help="check and scan every image; load and restart nothing"
+  )
+  parser.add_argument(
+    "command",
+    nargs="?",
+    choices=("install", "accept"),
+    help="install SERVICE: load and gate its images; "
+    "accept CONTAINER: pass its current image past the gate",
+  )
   parser.add_argument("name", nargs="?", help="SERVICE or CONTAINER")
   args = parser.parse_args(argv)
   if bool(args.command) != bool(args.name) or (args.command and args.dry_run):

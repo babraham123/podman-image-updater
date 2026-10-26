@@ -1,0 +1,10 @@
+# Matches the homelab's Python: 2-space indents and 100 columns. Ruff can't fill a literal
+# across lines, so packed tables sit between `# fmt: off` and `# fmt: on`.
+indent-width = 2
+line-length = 100
+
+[format]
+skip-magic-trailing-comma = true
+
+[lint]
+select = ["E9", "F"]

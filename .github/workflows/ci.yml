@@ -18,6 +18,7 @@ jobs:
         with:
           python-version: "3.13"
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
-      # Syntax errors and pyflakes only; the code keeps its own formatting.
-      - run: uvx ruff@0.17.0 check --select E9,F .
+      # Rules and style are in ruff.toml.
+      - run: uvx ruff@0.17.0 check .
+      - run: uvx ruff@0.17.0 format --check .
       - run: python3 -m unittest discover -s tests -v

@@ -26,13 +26,35 @@ _spec = importlib.util.spec_from_file_location("image_updater", ROOT / "image_up
 updater = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(updater)
 
-NGINX = {"service": "web", "container": "web", "image": "localhost/library/nginx:stable",
-         "upstream": "docker.io/library/nginx:stable"}
-REPORT = {"Results": [{"Target": "debian 12", "Vulnerabilities": [
-  {"VulnerabilityID": "CVE-2026-2", "Severity": "CRITICAL", "PkgName": "libc",
-   "InstalledVersion": "2.36", "FixedVersion": "2.37"},
-  {"VulnerabilityID": "CVE-2026-1", "Severity": "HIGH", "PkgName": "openssl",
-   "InstalledVersion": "3.0.1", "FixedVersion": "3.0.2"}]}]}
+NGINX = {
+  "service": "web",
+  "container": "web",
+  "image": "localhost/library/nginx:stable",
+  "upstream": "docker.io/library/nginx:stable",
+}
+REPORT = {
+  "Results": [
+    {
+      "Target": "debian 12",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2026-2",
+          "Severity": "CRITICAL",
+          "PkgName": "libc",
+          "InstalledVersion": "2.36",
+          "FixedVersion": "2.37",
+        },
+        {
+          "VulnerabilityID": "CVE-2026-1",
+          "Severity": "HIGH",
+          "PkgName": "openssl",
+          "InstalledVersion": "3.0.1",
+          "FixedVersion": "3.0.2",
+        },
+      ],
+    }
+  ]
+}
 
 
 def key(ref):
@@ -42,9 +64,14 @@ def key(ref):
 class Ntfy(BaseHTTPRequestHandler):
   def do_POST(self):
     body = self.rfile.read(int(self.headers["Content-Length"])).decode()
-    self.server.posts.append({"priority": int(self.headers["X-Priority"]),
-                              "title": self.headers["X-Title"], "body": body,
-                              "auth": self.headers.get("Authorization")})
+    self.server.posts.append(
+      {
+        "priority": int(self.headers["X-Priority"]),
+        "title": self.headers["X-Title"],
+        "body": body,
+        "auth": self.headers.get("Authorization"),
+      }
+    )
     self.send_response(200)
     self.end_headers()
 
@@ -95,8 +122,10 @@ class UpdaterTest(unittest.TestCase):
 
   def build_script(self, versions):
     script = self.dir / "build.sh"
-    script.write_text(f"#!/bin/sh\necho \"build.sh $*\" >> \"$FAKE/calls\"\n"
-                      f"[ \"$1\" != versions ] || printf '%s\\n' {versions}\n")
+    script.write_text(
+      f'#!/bin/sh\necho "build.sh $*" >> "$FAKE/calls"\n'
+      f"[ \"$1\" != versions ] || printf '%s\\n' {versions}\n"
+    )
     script.chmod(0o755)
     return str(script)
 
@@ -108,8 +137,13 @@ class UpdaterTest(unittest.TestCase):
     (self.fake / "calls").write_text("")
     out = io.StringIO()
     environ = {"FAKE": str(self.fake), "NO_PROXY": "*", "no_proxy": "*", **(env or {})}
-    with mock.patch.dict(os.environ, environ), mock.patch("os.geteuid", return_value=euid), \
-         mock.patch.object(updater, "RETRY_DELAY_S", 0), redirect_stdout(out), redirect_stderr(out):
+    with (
+      mock.patch.dict(os.environ, environ),
+      mock.patch("os.geteuid", return_value=euid),
+      mock.patch.object(updater, "RETRY_DELAY_S", 0),
+      redirect_stdout(out),
+      redirect_stderr(out),
+    ):
       try:
         code = updater.cli(["--config", str(self.config_file), "--host", "node1", *args])
       except SystemExit as e:
@@ -135,8 +169,11 @@ class UpdaterTest(unittest.TestCase):
 
   def metrics(self):
     """The textfile's samples, {name{labels}: value}."""
-    return dict(line.rsplit(" ", 1) for line in self.metrics_file.read_text().splitlines()
-                if not line.startswith("#"))
+    return dict(
+      line.rsplit(" ", 1)
+      for line in self.metrics_file.read_text().splitlines()
+      if not line.startswith("#")
+    )
 
   def posts(self):
     return [(p["priority"], p["title"]) for p in self.ntfy.posts]
@@ -149,8 +186,10 @@ class NightlyRun(UpdaterTest):
     self.image(NGINX["image"])
     self.fake_file("auto_update.json", '[{"Unit": "web.service", "Updated": true}]')
     self.assertEqual(self.run_updater(), 0, self.output)
-    self.assertIn(f"skopeo copy --quiet docker://docker.io/library/nginx@sha256:new "
-                  f"oci:{self.var}/staging/web", self.calls())
+    self.assertIn(
+      f"skopeo copy --quiet docker://docker.io/library/nginx@sha256:new oci:{self.var}/staging/web",
+      self.calls(),
+    )
     self.assertEqual(len(self.scans()), 1)
     self.assertEqual(self.loaded("localhost/library/nginx:rollback"), "old")
     self.assertEqual(self.loaded(NGINX["image"]), f"oci:{self.var}/staging/web")
@@ -158,8 +197,9 @@ class NightlyRun(UpdaterTest):
     metrics = self.metrics()
     self.assertEqual(metrics['image_updater_images{result="checked"}'], "1")
     self.assertEqual(metrics['image_updater_images{result="updated"}'], "1")
-    self.assertAlmostEqual(int(metrics["image_updater_last_success_timestamp_seconds"]),
-                           time.time(), delta=60)
+    self.assertAlmostEqual(
+      int(metrics["image_updater_last_success_timestamp_seconds"]), time.time(), delta=60
+    )
     self.assertEqual(self.posts(), [])
     self.assertEqual(list((self.var / "staging").iterdir()), [])
 
@@ -265,14 +305,21 @@ class NightlyRun(UpdaterTest):
 
   def test_deadline_defers_the_rest_to_the_next_night(self):
     self.config["deadline_s"] = 1500
-    self.config["images"].append({"container": "db", "image": "localhost/library/postgres:18",
-                                  "upstream": "docker.io/library/postgres:18"})
+    self.config["images"].append(
+      {
+        "container": "db",
+        "image": "localhost/library/postgres:18",
+        "upstream": "docker.io/library/postgres:18",
+      }
+    )
     for container in ("web", "db"):
       self.quadlet(container)
     self.upstream(NGINX["upstream"], "sha256:new")
     self.upstream("docker.io/library/postgres:18", "sha256:new")
     clock = itertools.count(0, 1000)
-    fake_time = types.SimpleNamespace(monotonic=lambda: next(clock), time=time.time, sleep=time.sleep)
+    fake_time = types.SimpleNamespace(
+      monotonic=lambda: next(clock), time=time.time, sleep=time.sleep
+    )
     with mock.patch.object(updater, "time", fake_time):
       self.assertEqual(self.run_updater(), 0, self.output)
     self.assertEqual(self.state("web"), "sha256:new loaded\n")
@@ -296,14 +343,22 @@ class NightlyRun(UpdaterTest):
 class BuiltImage(UpdaterTest):
   def setUp(self):
     super().setUp()
-    self.config["images"] = [{"container": "app", "image": "localhost/app:latest", "build": "app",
-                              "build_script": self.build_script("app@abc base@sha256:1")}]
+    self.config["images"] = [
+      {
+        "container": "app",
+        "image": "localhost/app:latest",
+        "build": "app",
+        "build_script": self.build_script("app@abc base@sha256:1"),
+      }
+    ]
     self.quadlet("app")
 
   def test_new_build_inputs_build_scan_and_load_the_candidate(self):
     self.assertEqual(self.run_updater(), 0, self.output)
     self.assertIn("build.sh build candidate", self.calls())
-    self.assertIn(f"podman save -o {self.var}/staging/app.tar localhost/app:candidate", self.calls())
+    self.assertIn(
+      f"podman save -o {self.var}/staging/app.tar localhost/app:candidate", self.calls()
+    )
     self.assertIn("podman untag localhost/app:candidate", self.calls())
     self.assertTrue(self.scans()[0].endswith(f"--input {self.var}/staging/app.tar"))
     self.assertIn("podman tag built123 localhost/app:latest", self.calls())
@@ -316,9 +371,14 @@ class BuiltImage(UpdaterTest):
 class Install(UpdaterTest):
   def setUp(self):
     super().setUp()
-    self.config["images"].append({"service": "db", "container": "db",
-                                  "image": "localhost/library/postgres:18",
-                                  "upstream": "docker.io/library/postgres:18"})
+    self.config["images"].append(
+      {
+        "service": "db",
+        "container": "db",
+        "image": "localhost/library/postgres:18",
+        "upstream": "docker.io/library/postgres:18",
+      }
+    )
     self.upstream(NGINX["upstream"], "sha256:new")
     self.upstream("docker.io/library/postgres:18", "sha256:new")
 
@@ -334,8 +394,9 @@ class Install(UpdaterTest):
     self.assertEqual(self.run_updater("install", "web"), 1, self.output)
     self.assertIsNone(self.loaded(NGINX["image"]))
     self.assertIn("web: blocked by the scan gate", self.output)
-    self.assertIn(f"--config {self.config_file} --host node1 accept web, then install again",
-                  self.output)
+    self.assertIn(
+      f"--config {self.config_file} --host node1 accept web, then install again", self.output
+    )
     self.assertEqual(self.posts(), [])
 
 
@@ -399,8 +460,9 @@ class Config(UpdaterTest):
   def test_registry_credentials_from_secrets(self):
     self.quadlet("web")
     self.upstream(NGINX["upstream"], "sha256:new")
-    self.config["registry_auth"] = {"docker.io": {"username": {"env": "REG_USER"},
-                                                  "password": {"command": ["/bin/echo", "tok"]}}}
+    self.config["registry_auth"] = {
+      "docker.io": {"username": {"env": "REG_USER"}, "password": {"command": ["/bin/echo", "tok"]}}
+    }
     self.assertEqual(self.run_updater(env={"REG_USER": "me"}), 0, self.output)
     auth = json.loads((self.fake / "authfile").read_text())
     self.assertEqual(auth, {"auths": {"docker.io": {"auth": base64.b64encode(b"me:tok").decode()}}})
