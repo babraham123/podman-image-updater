@@ -1,0 +1,27 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.13"
+      - run: python3 -m unittest discover -s tests -v
+      - run: python3 build.py
+      # The hash goes in the notes too, for the README's pinned install.
+      - run: |
+          cd dist
+          sha256sum image_updater > image_updater.sha256
+          gh release create "$GITHUB_REF_NAME" image_updater image_updater.sha256 \
+            --generate-notes --notes "sha256: $(cut -d' ' -f1 image_updater.sha256)"
+        env:
+          GH_TOKEN: ${{ github.token }}
