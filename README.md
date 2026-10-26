@@ -7,7 +7,8 @@ handled, downloads a changed one by digest and scans it with Trivy. If the scan 
 current image `:rollback`, loads the new one as `localhost/NAME` and runs `podman auto-update`; a
 failed update rolls back to `:rollback`. Images built on the host go through the same gate.
 
-`image_updater.py` is one file using only the Python 3 standard library, so it runs on a bare host.
+The `image_updater` package in `src/` uses only the Python 3 standard library and ships as one
+executable [zipapp](https://docs.python.org/3/library/zipapp.html), so it runs on a bare host.
 
 ## Why
 
@@ -33,7 +34,8 @@ Requires Podman with quadlets, `skopeo`, `trivy` ([Aqua's apt
 repo](https://trivy.dev/latest/getting-started/installation/)), systemd, and Python 3.9+.
 
 ```bash
-sudo install -D image_updater.py /usr/local/bin/image_updater
+python3 build.py   # dist/image_updater; or download it from a release, below
+sudo install -D dist/image_updater /usr/local/bin/image_updater
 sudo install -D -m 600 config.example.json /etc/image_updater/config.json   # then edit it
 sudo install -D -m 644 -t /etc/systemd/system systemd/image_updater.service systemd/image_updater.timer
 sudo systemctl daemon-reload
@@ -43,15 +45,17 @@ sudo systemctl disable --now podman-auto-update.timer
 sudo systemctl enable --now image_updater.timer
 ```
 
-To pin a version, fetch the file at a commit and check its hash:
+To pin a version, download a release's build and check it against the sha256 in its notes:
 
 ```bash
-commit=COMMIT
+tag=TAG
 sha=SHA256
-url="https://raw.githubusercontent.com/babraham123/podman-image-updater/${commit}/image_updater.py"
-wget -O image_updater.py "$url"
-echo "${sha}  image_updater.py" | sha256sum --check
+url="https://github.com/babraham123/podman-image-updater/releases/download/${tag}/image_updater"
+wget -O image_updater "$url"
+echo "${sha}  image_updater" | sha256sum --check
 ```
+
+Pushing a `v*` tag runs the tests, builds the zipapp and publishes it as a release.
 
 Each quadlet must use the `localhost/` name and enable local updates:
 
@@ -189,4 +193,4 @@ python3 -m unittest discover -s tests
 ```
 
 Runs end-to-end against fake `podman`, `skopeo`, `trivy` and `systemctl` (`tests/fakebin`) and a
-local ntfy stand-in.
+local ntfy stand-in, plus a check that the built zipapp runs.

@@ -1,16 +1,17 @@
-# image_updater.py end to end, against the fakes in tests/fakebin (podman, skopeo, trivy,
+# image_updater end to end, against the fakes in tests/fakebin (podman, skopeo, trivy,
 # systemctl) and a local ntfy stand-in. Expected behavior is the README's: what a run
 # loads, records, notifies and reports for each outcome.
 # Usage:
 #   python3 -m unittest discover -s tests
 
 import base64
-import importlib.util
 import io
 import itertools
 import json
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -22,9 +23,11 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
-_spec = importlib.util.spec_from_file_location("image_updater", ROOT / "image_updater.py")
-updater = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(updater)
+sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT))
+
+import build  # noqa: E402
+from image_updater import cli, commands, config  # noqa: E402
 
 NGINX = {
   "service": "web",
@@ -140,12 +143,12 @@ class UpdaterTest(unittest.TestCase):
     with (
       mock.patch.dict(os.environ, environ),
       mock.patch("os.geteuid", return_value=euid),
-      mock.patch.object(updater, "RETRY_DELAY_S", 0),
+      mock.patch.object(commands, "RETRY_DELAY_S", 0),
       redirect_stdout(out),
       redirect_stderr(out),
     ):
       try:
-        code = updater.cli(["--config", str(self.config_file), "--host", "node1", *args])
+        code = cli.cli(["--config", str(self.config_file), "--host", "node1", *args])
       except SystemExit as e:
         code = e.code
     self.output = out.getvalue()
@@ -320,7 +323,7 @@ class NightlyRun(UpdaterTest):
     fake_time = types.SimpleNamespace(
       monotonic=lambda: next(clock), time=time.time, sleep=time.sleep
     )
-    with mock.patch.object(updater, "time", fake_time):
+    with mock.patch.object(commands, "time", fake_time):
       self.assertEqual(self.run_updater(), 0, self.output)
     self.assertEqual(self.state("web"), "sha256:new loaded\n")
     self.assertIsNone(self.state("db"))
@@ -434,9 +437,16 @@ class Config(UpdaterTest):
     self.assertEqual(self.state("web"), "sha256:new loaded\n")
 
   def test_example_config_loads(self):
-    config = updater.load_config(ROOT / "config.example.json", "any")
-    self.assertEqual([i["container"] for i in config["images"]], ["nginx", "app", "ntfy"])
-    self.assertEqual(config["images"][2]["service"], "notify")
+    loaded = config.load_config(ROOT / "config.example.json", "any")
+    self.assertEqual([i["container"] for i in loaded["images"]], ["nginx", "app", "ntfy"])
+    self.assertEqual(loaded["images"][2]["service"], "notify")
+
+  def test_zipapp_runs_as_one_file(self):
+    app = build.build(self.dir / "image_updater")
+    self.assertTrue(os.access(app, os.X_OK))
+    out = subprocess.run([app, "--help"], capture_output=True, text=True, cwd=self.dir)
+    self.assertEqual(out.returncode, 0, out.stderr)
+    self.assertIn("usage: image_updater", out.stdout)
 
   def test_host_without_an_entry(self):
     self.config["hosts"] = {"node2": {}}
