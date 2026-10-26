@@ -1,54 +1,36 @@
 # podman-image-updater
 
-Nightly Podman image updates that only reach a container after a Trivy scan passes. For each
-image, in the config's order, `image_updater` compares the upstream digest with the one it handled
-last, downloads a changed one by digest, scans it, tags the current image `:rollback`, loads the
-new one under its `localhost/` name and runs `podman auto-update`. A container whose update fails
-is pointed back at `:rollback`. Images built on the host go through the same gate.
+Nightly Podman image updates that only reach a container after a Trivy scan passes.
 
-`image_updater.py` is one file, Python 3 standard library only, so it runs on a bare host.
+For each image, in config order, `image_updater` compares the upstream digest with the last one it
+handled, downloads a changed one by digest and scans it with Trivy. If the scan passes, it tags the
+current image `:rollback`, loads the new one as `localhost/NAME` and runs `podman auto-update`; a
+failed update rolls back to `:rollback`. Images built on the host go through the same gate.
+
+`image_updater.py` is one file using only the Python 3 standard library, so it runs on a bare host.
 
 ## Why
 
-With `AutoUpdate=registry`, whatever upstream pushes to a tag is pulled and restarted the same
-night, unscanned. A compromised or broken upstream image reaches the containers with nothing in
-between, and a failed update is only noticed when a service breaks. Here:
+Standard `AutoUpdate=registry` pulls and runs unscanned images immediately. This tool ensures:
 
-- Quadlets name `localhost/` images only, with `AutoUpdate=local`: nothing in a quadlet can pull,
-  so an unscanned image can't reach a container.
-- The scan gate blocks on fixable HIGH or CRITICAL findings only (`--ignore-unfixed`); the old
-  image keeps running. Two overrides, both needing a person: a trivyignore entry with an `exp:`
-  date and a reason, or `accept` run as root on the host, which passes one exact digest, or one
-  exact set of build inputs for a built image.
-- Installing a service goes through the same gate: run `image_updater install SERVICE` before
-  copying its quadlets, and a block stops the install.
-- The updater reports itself: ntfy notifications by outcome, and node_exporter textfile metrics
-  for an age alert.
+- Quadlets only use local images (`localhost/`, `AutoUpdate=local`), preventing unscanned starts.
+- Updates block on fixable HIGH or CRITICAL findings. Old images keep running.
+- A person can override with a `trivyignore` entry (expiry and reason) or by running `accept` as
+  root for one exact digest or set of build inputs.
+- `image_updater install SERVICE` gates new services before copying quadlets.
+- ntfy notifications and textfile metrics are provided.
 
-Considered and rejected:
+Trade-offs:
 
-- **A central scanning registry** (e.g. zot): one scan per image instead of one per host, but a
-  registry, its auth, certs and firewall rules to run, and that host on every update's path.
-- **`Pull=newer` in quadlets**: still pulls unscanned images, on every restart instead of nightly.
-- **Pinned digests in git**, updated by hand or a bot: every update becomes a commit and a
-  deploy, which in practice means updates stop.
-- **An `OnFailure=` hook on `podman-auto-update.service`**: it reports failures but scans nothing.
-
-Consequences:
-
-- Each host downloads and scans its own images: a Trivy DB refresh and a few downloads a night,
-  and registry credentials on each, since Docker Hub's anonymous pull limit is per IP and shared by
-  every host behind one router.
-- A run must fit its slot: `deadline_s` stops starting images after that long and leaves the rest
-  for the next night.
-- A CVE with no fix doesn't block, so a known-vulnerable image still runs until a fix ships.
-- No health checks gate the rollout: an image that starts but misbehaves stays until monitoring
-  catches it, then is rolled back by hand from `:rollback`.
+- Each host downloads/scans its own images (requires registry credentials to avoid rate limits).
+- `deadline_s` stops starting images after a duration; remaining images wait for the next night.
+- Unfixable CVEs do not block updates.
+- No health checks: misbehaving images that start successfully must be rolled back manually.
 
 ## Install
 
-Needs Podman with quadlets, `skopeo`, `trivy` ([Aqua's apt
-repo](https://trivy.dev/latest/getting-started/installation/)), systemd and Python 3.9+.
+Requires Podman with quadlets, `skopeo`, `trivy` ([Aqua's apt
+repo](https://trivy.dev/latest/getting-started/installation/)), systemd, and Python 3.9+.
 
 ```bash
 sudo install -D image_updater.py /usr/local/bin/image_updater
@@ -71,8 +53,7 @@ wget -O image_updater.py "$url"
 echo "${sha}  image_updater.py" | sha256sum --check
 ```
 
-Each quadlet names its image's `localhost/` name and lets `podman auto-update` restart it on a new
-local image:
+Each quadlet must use the `localhost/` name and enable local updates:
 
 ```ini
 [Container]
@@ -89,15 +70,15 @@ image_updater install SERVICE      # load and gate SERVICE's images, before copy
 image_updater accept CONTAINER     # pass CONTAINER's current upstream digest or build inputs
 ```
 
-Every mode runs as root. `--config FILE` (default `$IMAGE_UPDATER_CONFIG`, then
-`/etc/image_updater/config.json`) and `--host NAME` (default the short hostname) apply to all of
-them. The nightly run exits 1 when an image broke or still failed after two retries a minute apart,
-or the Trivy DB refresh failed; a blocked or rolled-back image is a clean run.
+All modes run as root. Options `--config FILE` (default `$IMAGE_UPDATER_CONFIG` or
+`/etc/image_updater/config.json`) and `--host NAME` (default short hostname) apply to all commands.
 
-`accept` rescans, prints the findings, records the digest and notifies; the next run loads it. For
-a built image it builds and scans, and records the build inputs, so the next run's build of the
-same inputs passes. Keep it off any remote dispatcher: only a person who has read the findings
-should run it.
+The nightly run exits 1 if an image breaks, fails after two retries a minute apart, or if the
+Trivy DB refresh fails. Blocked or rolled-back images count as a clean run.
+
+`accept` rescans, prints findings, records the digest, and notifies; the next run loads it. For a
+built image it builds, scans and records the build inputs, so the next build of the same inputs
+passes. Keep it off any remote dispatcher: only a person who has read the findings should run it.
 
 ## Config
 
@@ -111,7 +92,7 @@ JSON. Every key is optional except `images`:
 | `deadline_s` | `0` | Start no image after this many seconds; 0 is no deadline |
 | `boot_delay_s` | `0` | A run this soon after boot waits until then, e.g. for ntfy to come up |
 | `state_dir` | `/var/lib/image_updater` | State, staging downloads, accepted keys, the lock |
-| `metrics_file` | `/var/lib/node_exporter/textfile_collector/image_updater.prom` | Textfile metrics; `null` for none |
+| `metrics_file` | `/var/lib/node_exporter/`<br>`textfile_collector/`<br>`image_updater.prom` | Textfile metrics; `null` for none |
 | `trivy_cache` | `/var/cache/trivy` | Trivy's DB cache |
 | `quadlet_dir` | `/etc/containers/systemd` | Where `<container>.container` must exist for a nightly run to update it |
 | `path` | `/usr/sbin:/usr/bin:/sbin:/bin` | `PATH` for every command it runs |
@@ -132,24 +113,22 @@ A secret is `{"env": NAME}`, `{"file": PATH}` or `{"command": [ARGV...]}`. Trail
 dropped, and `null` (what `yq` prints for a missing key) counts as unset.
 [config.example.json](config.example.json) has one of each kind of image.
 
-Update order matters when one host's updates can interrupt notifications: put the notification
-path (ntfy, its proxy) last, and give the host running it the last slot and no deadline. A
-nightly run skips images whose quadlet isn't installed, so one file can list images a host doesn't
-run yet.
+If one host's updates can interrupt notifications, put the notification path (ntfy, its proxy) last,
+and give the host running it the last slot and no deadline. Nightly runs skip images whose quadlet
+isn't installed, so one file can list images a host doesn't run yet.
 
 ### Built images
 
 A build script takes two commands:
 
-- `versions`: print every input the image builds from, one per line: source commits, base image
-  digests (`skopeo inspect --no-tags docker://REF | jq -r .Digest`), hashes of local files. Any of
-  them moving rebuilds the image through the gate.
-- `build TAG`: build `localhost/<build>:TAG` from those inputs, pulling base images
-  (`podman build --pull=always`) so they are the ones `versions` reported.
+- `versions`: print every input, one per line: source commits, base image digests
+  (`skopeo inspect --no-tags docker://REF | jq -r .Digest`), local file hashes. Any change triggers
+  a rebuild through the gate.
+- `build TAG`: build `localhost/<build>:TAG` from those inputs, with `podman build --pull=always` so
+  base images match what `versions` reported.
 
-The candidate is built as `:candidate`, saved with `podman save` and scanned from the archive, so
-Trivy doesn't need the Podman socket, then untagged: a blocked build is only a dangling image the
-next prune removes.
+Candidates build as `:candidate`, save via `podman save`, and scan from the archive (no Podman
+socket needed for Trivy), then untag. Blocked builds become dangling images removed by next prune.
 
 ### Overrides
 
@@ -169,17 +148,17 @@ CVE-2026-12345 exp:2026-12-31
 | Updater broken: an image still failing after two retries, or the Trivy DB refresh failed | 5 |
 | `accept` passed an image | 3 |
 
-Titles start with the host name. A nightly run retries a notification for 4 minutes, in case ntfy
-is still starting; `install` and `accept` try once.
+Titles start with the host name. Nightly runs retry notifications for 4 minutes; `install` and
+`accept` try once.
 
-Metrics, written atomically after every nightly run:
+Metrics are written atomically after every nightly run:
 
-- `image_updater_last_success_timestamp_seconds`: the last run with nothing broken; kept from the
-  previous clean run otherwise
-- `image_updater_images{result}`: checked, updated, blocked, failed, error, broken, deferred
-- `image_updater_blocked_days{container}`: days since the gate first blocked it
+- `image_updater_last_success_timestamp_seconds`: last run with nothing broken; kept from the
+  previous clean run otherwise.
+- `image_updater_images{result}`: checked, updated, blocked, failed, error, broken, deferred.
+- `image_updater_blocked_days{container}`: days since the gate first blocked it.
 
-Alert on age rather than `absent()`, so a powered-off host stays quiet:
+Alert on age rather than `absent()` to keep powered-off hosts quiet:
 
 ```yaml
 - alert: ImageUpdaterStale
@@ -190,14 +169,18 @@ Alert on age rather than `absent()`, so a powered-off host stays quiet:
 
 Under `state_dir`:
 
-- `state/<container>`: `<digest or build inputs> <outcome>` of the one handled last. That digest
-  isn't handled again until upstream moves, so a failed update isn't retried every night.
+- `state/<container>`: `<digest or build inputs> <outcome>` of the last handled image. It isn't
+  handled again until upstream moves, so a failed update isn't retried every night.
 - `state/<container>.blocked`: when the gate first blocked it
 - `accepted/<container>`: what `accept` passed, one per line
 - `staging/`: downloads and build archives, emptied after every run
 
-Roll back by hand with `podman tag localhost/NAME:rollback localhost/NAME:TAG`, then `systemctl
-restart CONTAINER`.
+Roll back manually:
+
+```bash
+podman tag localhost/NAME:rollback localhost/NAME:TAG
+systemctl restart CONTAINER
+```
 
 ## Tests
 
@@ -205,5 +188,5 @@ restart CONTAINER`.
 python3 -m unittest discover -s tests
 ```
 
-End to end against fake `podman`, `skopeo`, `trivy` and `systemctl` (`tests/fakebin`) and a local
-ntfy stand-in.
+Runs end-to-end against fake `podman`, `skopeo`, `trivy` and `systemctl` (`tests/fakebin`) and a
+local ntfy stand-in.
