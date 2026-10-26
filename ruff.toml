@@ -1,5 +1,4 @@
-# Matches the homelab's Python: 2-space indents and 100 columns. Ruff can't fill a literal
-# across lines, so packed tables sit between `# fmt: off` and `# fmt: on`.
+# Matches the homelab's Python: 2-space indents and 100 columns.
 indent-width = 2
 line-length = 100
 
