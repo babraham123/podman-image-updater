@@ -295,6 +295,28 @@ class NightlyRun(UpdaterTest):
     self.assertEqual(self.posts(), [(5, "node1: Image updater broken")])
     self.assertNotIn("image_updater_last_success_timestamp_seconds", self.metrics())
 
+  def test_db_downloads_stage_beside_the_cache(self):
+    self.assertEqual(self.run_updater("--dry-run"), 0, self.output)
+    self.assertEqual(
+      [c for c in self.calls("trivy") if "--download" in c],
+      [
+        f"trivy image --quiet --cache-dir {self.dir / 'cache'} --download-db-only",
+        f"trivy image --quiet --cache-dir {self.dir / 'cache'} --download-java-db-only",
+      ],
+    )
+    self.assertEqual((self.fake / "download_tmpdir").read_text().strip(), str(self.dir / "cache"))
+
+  def test_java_db_off_downloads_only_the_vulnerability_db(self):
+    self.config["java_db"] = False
+    self.quadlet("web")
+    self.upstream(NGINX["upstream"], "sha256:new")
+    self.assertEqual(self.run_updater("--dry-run"), 0, self.output)
+    self.assertEqual(
+      [c for c in self.calls("trivy") if "--download" in c],
+      [f"trivy image --quiet --cache-dir {self.dir / 'cache'} --download-db-only"],
+    )
+    self.assertEqual(len(self.scans()), 1)
+
   def test_trivyignore_is_passed_once_it_exists(self):
     ignore = self.dir / ".trivyignore"
     self.config["images"][0]["trivyignore"] = str(ignore)

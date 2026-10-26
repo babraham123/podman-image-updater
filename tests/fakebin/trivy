@@ -1,9 +1,10 @@
 #!/bin/sh
-# Fake trivy. A DB download exits with $FAKE/db_rc, default 0. A scan writes
-# $FAKE/report.json, default no findings, as its report and exits with $FAKE/rc, default 0.
+# Fake trivy. A DB download writes its TMPDIR to $FAKE/download_tmpdir and exits with
+# $FAKE/db_rc, default 0. A scan writes $FAKE/report.json, default no findings, as its report
+# and exits with $FAKE/rc, default 0.
 echo "trivy $*" >> "$FAKE/calls"
 case " $* " in
-  *" --download-"*) exit "$(cat "$FAKE/db_rc" 2> /dev/null || echo 0)" ;;
+  *" --download-"*) echo "$TMPDIR" > "$FAKE/download_tmpdir"; exit "$(cat "$FAKE/db_rc" 2> /dev/null || echo 0)" ;;
 esac
 while [ $# -gt 0 ]; do
   [ "$1" = --output ] && output=$2

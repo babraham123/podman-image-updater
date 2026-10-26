@@ -45,5 +45,5 @@ def run(*cmd, check=True, capture=False, **kwargs):
   )
 
 
-def ok(*cmd):
-  return run(*cmd, check=False, stderr=subprocess.DEVNULL).returncode == 0
+def ok(*cmd, **kwargs):
+  return run(*cmd, check=False, stderr=subprocess.DEVNULL, **kwargs).returncode == 0

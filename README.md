@@ -97,7 +97,8 @@ JSON. Every key is optional except `images`:
 | `boot_delay_s` | `0` | A run this soon after boot waits until then, e.g. for ntfy to come up |
 | `state_dir` | `/var/lib/image_updater` | State, staging downloads, accepted keys, the lock |
 | `metrics_file` | `/var/lib/node_exporter/`<br>`textfile_collector/`<br>`image_updater.prom` | Textfile metrics; `null` for none |
-| `trivy_cache` | `/var/cache/trivy` | Trivy's DB cache |
+| `trivy_cache` | `/var/cache/trivy` | Trivy's DB cache; DB downloads stage here too, not in a `/tmp` tmpfs |
+| `java_db` | `true` | Download Trivy's Java DB (~1 GB) to scan jars; with `false`, an image with jars fails its scan |
 | `quadlet_dir` | `/etc/containers/systemd` | Where `<container>.container` must exist for a nightly run to update it |
 | `path` | `/usr/sbin:/usr/bin:/sbin:/bin` | `PATH` for every command it runs |
 | `hosts` | none | `{HOST: {key: value}}`: one file for several hosts; the entry for `--host` overlays the top-level keys |

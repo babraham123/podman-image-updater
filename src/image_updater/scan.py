@@ -1,6 +1,7 @@
 # The Trivy scan gate.
 
 import json
+import os
 import shlex
 import time
 from pathlib import Path
@@ -12,10 +13,13 @@ from .util import Result, die, log, ok, run
 
 # A scan never runs against a stale database: the caller fails when this does.
 def trivy_refresh():
-  cache = ctx.cfg["trivy_cache"]
-  return ok("trivy", "image", "--quiet", "--cache-dir", cache, "--download-db-only") and ok(
-    "trivy", "image", "--quiet", "--cache-dir", cache, "--download-java-db-only"
-  )
+  # Trivy stages a download in TMPDIR, often a tmpfs too small for the ~1 GB Java DB, so it
+  # stages beside the cache instead.
+  cache = Path(ctx.cfg["trivy_cache"])
+  cache.mkdir(parents=True, exist_ok=True)
+  env = {**os.environ, "TMPDIR": str(cache)}
+  dbs = ["--download-db-only"] + (["--download-java-db-only"] if ctx.cfg["java_db"] else [])
+  return all(ok("trivy", "image", "--quiet", "--cache-dir", cache, db, env=env) for db in dbs)
 
 
 def scan(entry, source, report):

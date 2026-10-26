@@ -19,6 +19,7 @@ DEFAULTS = {
   "state_dir": "/var/lib/image_updater",
   "metrics_file": "/var/lib/node_exporter/textfile_collector/image_updater.prom",
   "trivy_cache": "/var/cache/trivy",
+  "java_db": True,
   "quadlet_dir": "/etc/containers/systemd",
   "path": "/usr/sbin:/usr/bin:/sbin:/bin",
 }
