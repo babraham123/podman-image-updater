@@ -19,6 +19,6 @@ jobs:
           python-version: "3.15"
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       # Rules and style are in ruff.toml.
-      - run: uvx ruff@0.17.0 check .
-      - run: uvx ruff@0.17.0 format --check .
+      - run: uvx ruff@0.17.4 check .
+      - run: uvx ruff@0.17.4 format --check .
       - run: python3 -m unittest discover -s tests -v
