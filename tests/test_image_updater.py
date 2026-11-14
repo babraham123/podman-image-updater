@@ -123,11 +123,13 @@ class UpdaterTest(unittest.TestCase):
   def fake_file(self, name, content):
     (self.fake / name).write_text(content)
 
-  def build_script(self, versions):
+  def build_script(self, versions, build="true"):
+    """A build.sh that prints VERSIONS and runs the shell command BUILD to build."""
     script = self.dir / "build.sh"
     script.write_text(
       f'#!/bin/sh\necho "build.sh $*" >> "$FAKE/calls"\n'
       f"[ \"$1\" != versions ] || printf '%s\\n' {versions}\n"
+      f'[ "$1" != build ] || {build}\n'
     )
     script.chmod(0o755)
     return str(script)
@@ -384,13 +386,28 @@ class BuiltImage(UpdaterTest):
     self.assertIn(
       f"podman save -o {self.var}/staging/app.tar localhost/app:candidate", self.calls()
     )
-    self.assertIn("podman untag localhost/app:candidate", self.calls())
+    self.assertIn("podman untag localhost/app:candidate localhost/app:candidate", self.calls())
     self.assertTrue(self.scans()[0].endswith(f"--input {self.var}/staging/app.tar"))
     self.assertIn("podman tag built123 localhost/app:latest", self.calls())
     self.assertEqual(self.state("app"), "app@abc,base@sha256:1 loaded\n")
     # The same inputs don't build again
     self.assertEqual(self.run_updater(), 0, self.output)
     self.assertNotIn("build.sh build candidate", self.calls())
+
+  def test_blocked_cached_build_leaves_the_running_image_tagged(self):
+    # A fully cached build is the running image itself, now also tagged :candidate
+    self.image("localhost/app:latest", "running")
+    self.config["images"][0]["build_script"] = self.build_script(
+      "app@abc base@sha256:1",
+      build=f'cp "$FAKE/images/{key("localhost/app:latest")}"'
+      f' "$FAKE/images/{key("localhost/app:candidate")}"',
+    )
+    self.fake_file("rc", "3")
+    self.fake_file("report.json", json.dumps(REPORT))
+    self.run_updater()
+    self.assertIn("app: blocked by the scan", self.output)
+    self.assertEqual(self.loaded("localhost/app:latest"), "running")
+    self.assertIsNone(self.loaded("localhost/app:candidate"))
 
 
 class Install(UpdaterTest):

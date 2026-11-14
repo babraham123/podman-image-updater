@@ -1,6 +1,7 @@
 #!/bin/sh
 # Fake podman over $FAKE/images/<image key>, one file per tag holding the source the image
-# came from. auto-update prints $FAKE/auto_update.json, default [].
+# came from; tags holding the same source are one image. auto-update prints
+# $FAKE/auto_update.json, default [].
 echo "podman $*" >> "$FAKE/calls"
 key() { printf %s "$1" | tr '/:@' '___'; }
 case "$1 $2" in
@@ -9,7 +10,18 @@ case "$1 $2" in
   "image prune") ;;
   "auto-update --format") cat "$FAKE/auto_update.json" 2> /dev/null || echo '[]' ;;
   "save -o") touch "$3" ;;
-  "untag "*) rm -f "$FAKE/images/$(key "$2")" ;;
+  "untag "*)
+    if [ $# -gt 2 ]; then
+      shift 2
+      for name; do rm -f "$FAKE/images/$(key "$name")"; done
+    elif [ -f "$FAKE/images/$(key "$2")" ]; then
+      # No names: podman drops every tag on the image
+      source=$(cat "$FAKE/images/$(key "$2")")
+      for tag in "$FAKE"/images/*; do
+        if [ "$(cat "$tag")" = "$source" ]; then rm -f "$tag"; fi
+      done
+    fi
+    ;;
   "tag "*)
     if [ -f "$FAKE/images/$(key "$2")" ]; then
       cp "$FAKE/images/$(key "$2")" "$FAKE/images/$(key "$3")"

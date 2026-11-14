@@ -90,7 +90,9 @@ def build_candidate(entry, archive):
   run(entry["build_script"], "build", "candidate")
   run("podman", "save", "-o", archive, candidate)
   built_id = json.loads(run("podman", "image", "inspect", candidate, capture=True).stdout)[0]["Id"]
-  run("podman", "untag", candidate)
+  # Names the tag: a bare `podman untag IMAGE` drops every tag on the image, and a fully
+  # cached build is the running image itself, so that would take its tag too.
+  run("podman", "untag", candidate, candidate)
   return built_id
 
 
