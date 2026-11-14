@@ -7,7 +7,6 @@ import time
 from pathlib import Path
 
 from . import ctx
-from .ntfy import notify
 from .util import Result, die, log, ok, run
 
 
@@ -73,31 +72,17 @@ def accept_command(container):
 
 
 def blocked(entry, key, report):
-  """The scan gate stopped KEY; the old image keeps running."""
+  """The scan gate stopped KEY; the old image keeps running. No notification: the marker
+  feeds image_updater_blocked_days, so one alert rule can list every blocked container."""
   container = entry["container"]
   findings(report)
   if ctx.mode == "run":
     marker = ctx.state / f"{container}.blocked"
-    if not marker.exists():
-      marker.write_text(f"{int(time.time())}\n")
-    days = (int(time.time()) - int(marker.read_text())) // 86400
+    since = marker.read_text().splitlines()[0] if marker.exists() else int(time.time())
     ids = sorted({v.get("VulnerabilityID") for _, v in vulnerabilities(report)})
     ids = ", ".join(ids[:10]) + (", …" if len(ids) > 10 else "")
-    if days < 7:
-      notify(
-        3,
-        f"{container} update blocked",
-        f"{key} has fixable HIGH/CRITICAL CVEs: {ids}. The old image keeps running.",
-      )
-    else:
-      ignore = entry.get("trivyignore")
-      where = f"to {ignore} with an exp: date, or" if ignore else "to a trivyignore file, or"
-      notify(
-        5,
-        f"{container} blocked for {days} days",
-        f"{key} has fixable HIGH/CRITICAL CVEs: {ids}. To override after review, add them "
-        f"{where} on {ctx.host} run: {accept_command(container)}",
-      )
+    marker.write_text(f"{since}\n{ids}\n")
+    log(f"after review, to override: {accept_command(container)}")
   elif ctx.mode == "install":
     log(f"after review, to override: {accept_command(container)}, then install again")
 

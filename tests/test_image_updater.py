@@ -230,7 +230,7 @@ class NightlyRun(UpdaterTest):
     self.assertEqual(self.calls("skopeo"), [])
     self.assertEqual(self.metrics()['image_updater_images{result="checked"}'], "0")
 
-  def test_fixable_findings_block_the_image_and_notify(self):
+  def test_fixable_findings_block_the_image_and_report_it_in_metrics_only(self):
     self.quadlet("web")
     self.upstream(NGINX["upstream"], "sha256:new")
     self.image(NGINX["image"])
@@ -241,29 +241,28 @@ class NightlyRun(UpdaterTest):
     self.assertIsNone(self.state("web"))
     self.assertTrue((self.var / "state" / "web.blocked").exists())
     self.assertIn("HIGH CVE-2026-1 openssl 3.0.1 -> 3.0.2 (debian 12)", self.output)
-    self.assertEqual(self.posts(), [(3, "node1: web update blocked")])
-    self.assertIn("CVE-2026-1, CVE-2026-2", self.ntfy.posts[0]["body"])
-    self.assertIn("The old image keeps running", self.ntfy.posts[0]["body"])
+    self.assertIn(f" --config {self.config_file} --host node1 accept web", self.output)
+    self.assertEqual(self.posts(), [])
     metrics = self.metrics()
     self.assertEqual(metrics['image_updater_images{result="blocked"}'], "1")
-    self.assertEqual(metrics['image_updater_blocked_days{container="web"}'], "0")
+    self.assertEqual(
+      metrics['image_updater_blocked_days{container="web",cves="CVE-2026-1, CVE-2026-2"}'], "0"
+    )
     self.assertIn("image_updater_last_success_timestamp_seconds", metrics)
 
-  def test_block_older_than_a_week_escalates_with_the_override_commands(self):
-    self.config["images"][0]["trivyignore"] = "/srv/web/.trivyignore"
+  def test_block_keeps_its_first_date_and_the_latest_cves(self):
     self.quadlet("web")
     self.upstream(NGINX["upstream"], "sha256:new")
     self.fake_file("rc", "3")
     self.fake_file("report.json", json.dumps(REPORT))
     (self.var / "state").mkdir(parents=True)
-    (self.var / "state" / "web.blocked").write_text(f"{int(time.time()) - 8 * 86400}\n")
+    (self.var / "state" / "web.blocked").write_text(f"{int(time.time()) - 8 * 86400}\nCVE-2025-9\n")
     self.assertEqual(self.run_updater(), 0, self.output)
-    self.assertEqual(self.posts(), [(5, "node1: web blocked for 8 days")])
-    body = self.ntfy.posts[0]["body"]
-    self.assertIn("add them to /srv/web/.trivyignore with an exp: date", body)
-    self.assertIn("on node1 run: sudo ", body)
-    self.assertTrue(body.endswith(f" --config {self.config_file} --host node1 accept web"), body)
-    self.assertEqual(self.metrics()['image_updater_blocked_days{container="web"}'], "8")
+    self.assertEqual(self.posts(), [])
+    self.assertEqual(
+      self.metrics()['image_updater_blocked_days{container="web",cves="CVE-2026-1, CVE-2026-2"}'],
+      "8",
+    )
 
   def test_failed_update_goes_back_to_the_rollback_image(self):
     self.quadlet("web")

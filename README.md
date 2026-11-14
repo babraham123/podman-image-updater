@@ -19,7 +19,7 @@ Standard `AutoUpdate=registry` pulls and runs unscanned images immediately. This
 - A person can override with a `trivyignore` entry (expiry and reason) or by running `accept` as
   root for one exact digest or set of build inputs.
 - `image_updater install SERVICE` gates new services before copying quadlets.
-- ntfy notifications and textfile metrics are provided.
+- ntfy notifications for failures and textfile metrics, including every blocked image.
 
 Trade-offs:
 
@@ -148,27 +148,34 @@ CVE-2026-12345 exp:2026-12-31
 
 | ntfy notification | Priority |
 | --- | --- |
-| Update blocked by the scan, daily | 3; 5 after 7 days, with the override commands |
 | Update failed, rolled back to the previous image | 4 |
 | Updater broken: an image still failing after two retries, or the Trivy DB refresh failed | 5 |
 | `accept` passed an image | 3 |
 
 Titles start with the host name. Nightly runs retry notifications for 4 minutes; `install` and
-`accept` try once.
+`accept` try once. A blocked update has no notification: it shows in
+`image_updater_blocked_days` until an update gets through, so one alert can list every blocked
+image on every host, as often as you choose. The journal has the findings and the `accept`
+command.
 
 Metrics are written atomically after every nightly run:
 
 - `image_updater_last_success_timestamp_seconds`: last run with nothing broken; kept from the
   previous clean run otherwise.
 - `image_updater_images{result}`: checked, updated, blocked, failed, error, broken, deferred.
-- `image_updater_blocked_days{container}`: days since the gate first blocked it.
+- `image_updater_blocked_days{container, cves}`: days since the gate first blocked it, and the
+  fixable HIGH/CRITICAL IDs that blocked it last (the first 10).
 
 Alert on age rather than `absent()` to keep powered-off hosts quiet:
 
 ```yaml
 - alert: ImageUpdaterStale
   expr: time() - image_updater_last_success_timestamp_seconds > 36 * 3600
+- alert: ImageUpdateBlocked
+  expr: image_updater_blocked_days
 ```
+
+Group `ImageUpdateBlocked` by alert name alone in Alertmanager to get one message listing them all.
 
 ## State
 
@@ -176,7 +183,7 @@ Under `state_dir`:
 
 - `state/<container>`: `<digest or build inputs> <outcome>` of the last handled image. It isn't
   handled again until upstream moves, so a failed update isn't retried every night.
-- `state/<container>.blocked`: when the gate first blocked it
+- `state/<container>.blocked`: when the gate first blocked it, then the IDs that blocked it last
 - `accepted/<container>`: what `accept` passed, one per line
 - `staging/`: downloads and build archives, emptied after every run
 

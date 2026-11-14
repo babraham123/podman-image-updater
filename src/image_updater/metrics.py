@@ -33,12 +33,15 @@ def write_metrics(clean, count):
   ]
   lines += [f'image_updater_images{{result="{r}"}} {n}' for r, n in count.items()]
   lines += [
-    "# HELP image_updater_blocked_days Days since the scan gate first blocked the container's update.",
+    "# HELP image_updater_blocked_days Days since the scan gate first blocked the container's "
+    "update; cves lists what blocked it last.",
     "# TYPE image_updater_blocked_days gauge",
   ]
   for marker in sorted(ctx.state.glob("*.blocked")):
-    days = (int(time.time()) - int(marker.read_text())) // 86400
-    lines.append(f'image_updater_blocked_days{{container="{marker.stem}"}} {days}')
+    since, cves = (marker.read_text().splitlines() + [""])[:2]
+    days = (int(time.time()) - int(since)) // 86400
+    cves = cves.replace("\\", "\\\\").replace('"', '\\"')
+    lines.append(f'image_updater_blocked_days{{container="{marker.stem}",cves="{cves}"}} {days}')
   metrics.parent.mkdir(parents=True, exist_ok=True)
   partial = metrics.with_name(f"{metrics.name}.tmp")
   partial.write_text("\n".join(lines) + "\n")
