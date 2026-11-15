@@ -9,7 +9,9 @@
   ],
   "minimumReleaseAge": "3 days",
   "osvVulnerabilityAlerts": true,
-  "dependencyDashboardOSVVulnerabilitySummary": "unresolved",
+  "dependencyDashboard": {
+    "osvVulnerabilitySummary": "unresolved"
+  },
   "customManagers": [
     {
       "customType": "regex",
@@ -30,6 +32,14 @@
       "matchUpdateTypes": [
         "pin",
         "pinDigest"
+      ],
+      "minimumReleaseAge": "0 days"
+    },
+    {
+      "description": "Digest updates and lock file refreshes carry no release timestamp, so a release-age wait would hold them pending forever",
+      "matchUpdateTypes": [
+        "digest",
+        "lockFileMaintenance"
       ],
       "minimumReleaseAge": "0 days"
     },
