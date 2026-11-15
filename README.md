@@ -186,7 +186,9 @@ Under `state_dir`:
 
 - `state/<container>`: `<digest or build inputs> <outcome>` of the last handled image. It isn't
   handled again until upstream moves, so a failed update isn't retried every night.
-- `state/<container>.blocked`: when the gate first blocked it, then the IDs that blocked it last
+- `state/<container>.blocked`: when the gate first blocked it, then the IDs that blocked it last.
+  An update clears it, and a nightly run removes it once the container has no config entry or
+  no quadlet. A date that doesn't parse is reset to the run that reads it.
 - `accepted/<container>`: what `accept` passed, one per line
 - `staging/`: downloads and build archives, emptied after every run
 

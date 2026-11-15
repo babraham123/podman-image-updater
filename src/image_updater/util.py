@@ -1,5 +1,6 @@
 # Outcomes, logging and running commands.
 
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -47,3 +48,17 @@ def run(*cmd, check=True, capture=False, **kwargs):
 
 def ok(*cmd, **kwargs):
   return run(*cmd, check=False, stderr=subprocess.DEVNULL, **kwargs).returncode == 0
+
+
+def write_atomic(path, text, mode=None):
+  """Writes PATH whole or not at all: through a temp file beside it, then a rename. Runs hold
+  the lock, so the temp name can be fixed."""
+  partial = path.with_name(f".{path.name}.tmp")
+  with open(partial, "w") as f:
+    f.write(text)
+    f.flush()
+    # Without it a power cut after the rename can leave PATH empty.
+    os.fsync(f.fileno())
+  if mode is not None:
+    partial.chmod(mode)
+  partial.rename(path)

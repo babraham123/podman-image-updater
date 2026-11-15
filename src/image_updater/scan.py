@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 from . import ctx
-from .util import Result, die, log, ok, run
+from .util import Result, die, log, ok, run, write_atomic
 
 
 # A scan never runs against a stale database: the caller fails when this does.
@@ -71,6 +71,26 @@ def accept_command(container):
   return f"sudo {shlex.join(ctx.self_cmd)} accept {container}"
 
 
+def blocked_marker(container):
+  return ctx.state / f"{container}.blocked"
+
+
+def blocked_markers():
+  return sorted(ctx.state.glob("*.blocked"))
+
+
+def read_marker(marker):
+  """(since, cves) of a blocked marker. One whose date doesn't parse is dated now and written
+  back, so its days count up from here instead of restarting at 0 every run."""
+  since, cves = (marker.read_text().splitlines() + ["", ""])[:2]
+  try:
+    return int(since), cves
+  except ValueError:
+    since = int(time.time())
+    write_atomic(marker, f"{since}\n{cves}\n")
+    return since, cves
+
+
 def blocked(group, key, report):
   """The scan gate stopped KEY; the old image keeps running. No notification: each
   container's marker feeds image_updater_blocked_days, so one alert rule can list every
@@ -81,9 +101,9 @@ def blocked(group, key, report):
     ids = sorted({v.get("VulnerabilityID") for _, v in vulnerabilities(report)})
     ids = ", ".join(ids[:10]) + (", …" if len(ids) > 10 else "")
     for entry in group:
-      marker = ctx.state / f"{entry['container']}.blocked"
-      since = marker.read_text().splitlines()[0] if marker.exists() else int(time.time())
-      marker.write_text(f"{since}\n{ids}\n")
+      marker = blocked_marker(entry["container"])
+      since = read_marker(marker)[0] if marker.exists() else int(time.time())
+      write_atomic(marker, f"{since}\n{ids}\n")
     log(f"after review, to override: {command}")
   elif ctx.mode == "install":
     log(f"after review, to override: {command}, then install again")

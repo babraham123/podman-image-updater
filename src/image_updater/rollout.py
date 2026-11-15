@@ -4,6 +4,7 @@ import json
 
 from . import ctx
 from .ntfy import notify
+from .scan import blocked_marker
 from .util import Result, ok, run
 
 
@@ -24,7 +25,7 @@ def handled(group, key, image):
 def record(container, key, outcome):
   """The digest isn't handled again until upstream moves."""
   (ctx.state / container).write_text(f"{key} {outcome}\n")
-  (ctx.state / f"{container}.blocked").unlink(missing_ok=True)
+  blocked_marker(container).unlink(missing_ok=True)
 
 
 def untagged(image):

@@ -264,6 +264,53 @@ class NightlyRun(UpdaterTest):
       "8",
     )
 
+  def test_empty_block_marker_is_dated_now_and_the_run_completes(self):
+    self.quadlet("web")
+    self.upstream(NGINX["upstream"], "sha256:same")
+    self.image(NGINX["image"])
+    (self.var / "state").mkdir(parents=True)
+    (self.var / "state" / "web").write_text("sha256:same updated\n")
+    (self.var / "state" / "web.blocked").write_text("")
+    self.assertEqual(self.run_updater(), 0, self.output)
+    self.assertEqual(self.metrics()['image_updater_blocked_days{container="web",cves=""}'], "0")
+    since = int(self.state("web.blocked").splitlines()[0])
+    self.assertAlmostEqual(since, time.time(), delta=60)
+    # The next run counts from that date rather than dating it again
+    self.assertEqual(self.run_updater(), 0, self.output)
+    self.assertEqual(int(self.state("web.blocked").splitlines()[0]), since)
+
+  def test_empty_block_marker_is_dated_now_when_the_gate_blocks_again(self):
+    self.quadlet("web")
+    self.upstream(NGINX["upstream"], "sha256:new")
+    self.fake_file("rc", "3")
+    self.fake_file("report.json", json.dumps(REPORT))
+    (self.var / "state").mkdir(parents=True)
+    (self.var / "state" / "web.blocked").write_text("")
+    self.assertEqual(self.run_updater(), 0, self.output)
+    since, cves = self.state("web.blocked").splitlines()
+    self.assertAlmostEqual(int(since), time.time(), delta=60)
+    self.assertEqual(cves, "CVE-2026-1, CVE-2026-2")
+
+  def test_block_marker_of_a_container_no_longer_installed_is_removed(self):
+    self.quadlet("web")
+    self.upstream(NGINX["upstream"], "sha256:same")
+    self.image(NGINX["image"])
+    self.config["images"].append(dict(NGINX, container="web2"))
+    state = self.var / "state"
+    state.mkdir(parents=True)
+    (state / "web").write_text("sha256:same updated\n")
+    since = int(time.time()) - 86400
+    for container in ("web", "web2", "gone"):
+      (state / f"{container}.blocked").write_text(f"{since}\nCVE-2025-9\n")
+    # A dry run removes nothing
+    self.assertEqual(self.run_updater("--dry-run"), 0, self.output)
+    self.assertTrue((state / "gone.blocked").exists())
+    self.assertEqual(self.run_updater(), 0, self.output)
+    # web2 is configured but has no quadlet; gone isn't configured at all
+    self.assertEqual(sorted(p.name for p in state.glob("*.blocked")), ["web.blocked"])
+    blocked = [k for k in self.metrics() if k.startswith("image_updater_blocked_days")]
+    self.assertEqual(blocked, ['image_updater_blocked_days{container="web",cves="CVE-2025-9"}'])
+
   def test_failed_update_goes_back_to_the_rollback_image(self):
     self.quadlet("web")
     self.upstream(NGINX["upstream"], "sha256:new")

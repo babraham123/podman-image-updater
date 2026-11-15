@@ -4,6 +4,8 @@ import time
 from pathlib import Path
 
 from . import ctx
+from .scan import blocked_markers, read_marker
+from .util import write_atomic
 
 
 def write_metrics(clean, count):
@@ -37,14 +39,11 @@ def write_metrics(clean, count):
     "update; cves lists what blocked it last.",
     "# TYPE image_updater_blocked_days gauge",
   ]
-  for marker in sorted(ctx.state.glob("*.blocked")):
-    since, cves = (marker.read_text().splitlines() + [""])[:2]
-    days = (int(time.time()) - int(since)) // 86400
+  for marker in blocked_markers():
+    since, cves = read_marker(marker)
+    days = (int(time.time()) - since) // 86400
     cves = cves.replace("\\", "\\\\").replace('"', '\\"')
     lines.append(f'image_updater_blocked_days{{container="{marker.stem}",cves="{cves}"}} {days}')
   metrics.parent.mkdir(parents=True, exist_ok=True)
-  partial = metrics.with_name(f"{metrics.name}.tmp")
-  partial.write_text("\n".join(lines) + "\n")
-  partial.chmod(0o644)
-  # node_exporter only reads *.prom, and the rename is atomic.
-  partial.rename(metrics)
+  # node_exporter only reads *.prom, so it never sees the temp file.
+  write_atomic(metrics, "\n".join(lines) + "\n", 0o644)

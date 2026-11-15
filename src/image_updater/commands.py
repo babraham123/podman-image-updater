@@ -10,7 +10,7 @@ from . import ctx
 from .images import build_candidate, build_versions, check, download, registry_auth, upstream_digest
 from .metrics import write_metrics
 from .ntfy import notify
-from .scan import findings, scan, trivy_refresh
+from .scan import blocked_markers, findings, scan, trivy_refresh
 from .util import Result, die, log, ok, run, warn
 
 RETRY_DELAY_S = 60
@@ -84,8 +84,19 @@ def update_all():
   count = Counter(
     {k: 0 for k in ("checked", "updated", "blocked", "failed", "error", "broken", "deferred")}
   )
+  installed = [
+    e
+    for e in ctx.cfg["images"]
+    if (Path(ctx.cfg["quadlet_dir"]) / f"{e['container']}.container").is_file()
+  ]
   if not dry:
     wait_for_boot()
+    # Only an update clears a marker, so one for a container that left the config, or lost
+    # its quadlet, would otherwise stay in image_updater_blocked_days.
+    names = {e["container"] for e in installed}
+    for marker in blocked_markers():
+      if marker.stem not in names:
+        marker.unlink()
   ctx.auth = registry_auth()
   if not trivy_refresh():
     if dry:
@@ -94,11 +105,6 @@ def update_all():
     notify(5, "Image updater broken", "Trivy DB refresh failed, so nothing was checked.")
     finish(False, count)
   started, broken = time.monotonic(), []
-  installed = [
-    e
-    for e in ctx.cfg["images"]
-    if (Path(ctx.cfg["quadlet_dir"]) / f"{e['container']}.container").is_file()
-  ]
   for group in by_image(installed):
     if not dry and ctx.cfg["deadline_s"] and time.monotonic() - started > ctx.cfg["deadline_s"]:
       for entry in group:
