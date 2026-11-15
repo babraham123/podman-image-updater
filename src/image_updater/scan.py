@@ -71,20 +71,22 @@ def accept_command(container):
   return f"sudo {shlex.join(ctx.self_cmd)} accept {container}"
 
 
-def blocked(entry, key, report):
-  """The scan gate stopped KEY; the old image keeps running. No notification: the marker
-  feeds image_updater_blocked_days, so one alert rule can list every blocked container."""
-  container = entry["container"]
+def blocked(group, key, report):
+  """The scan gate stopped KEY; the old image keeps running. No notification: each
+  container's marker feeds image_updater_blocked_days, so one alert rule can list every
+  blocked container."""
   findings(report)
+  command = accept_command(group[0]["container"])
   if ctx.mode == "run":
-    marker = ctx.state / f"{container}.blocked"
-    since = marker.read_text().splitlines()[0] if marker.exists() else int(time.time())
     ids = sorted({v.get("VulnerabilityID") for _, v in vulnerabilities(report)})
     ids = ", ".join(ids[:10]) + (", …" if len(ids) > 10 else "")
-    marker.write_text(f"{since}\n{ids}\n")
-    log(f"after review, to override: {accept_command(container)}")
+    for entry in group:
+      marker = ctx.state / f"{entry['container']}.blocked"
+      since = marker.read_text().splitlines()[0] if marker.exists() else int(time.time())
+      marker.write_text(f"{since}\n{ids}\n")
+    log(f"after review, to override: {command}")
   elif ctx.mode == "install":
-    log(f"after review, to override: {accept_command(container)}, then install again")
+    log(f"after review, to override: {command}, then install again")
 
 
 def is_accepted(container, key):
@@ -94,19 +96,20 @@ def is_accepted(container, key):
     return False
 
 
-def gate(entry, key, source):
+def gate(group, key, source):
   """Returns if the image at SOURCE passes the scan, else ends the attempt as blocked. KEY
-  is the digest or build inputs `accept` would record."""
-  container = entry["container"]
-  if is_accepted(container, key):
+  is the digest or build inputs `accept` would record; accepting it for any container on
+  the image passes it for all of them."""
+  container = group[0]["container"]
+  if any(is_accepted(e["container"], key) for e in group):
     log(f"{container}: {key} was accepted; not gated")
     return
   report = ctx.tmp / f"{container}.json"
-  rc = scan(entry, source, report)
+  rc = scan(group[0], source, report)
   if rc == 0:
     log(f"{container}: scan passed")
   elif rc == 3:
-    blocked(entry, key, report)
+    blocked(group, key, report)
     raise Result("blocked", "blocked by the scan")
   else:
     die(f"trivy failed on {container} (exit {rc})")

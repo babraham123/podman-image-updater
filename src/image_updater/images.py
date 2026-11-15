@@ -8,9 +8,9 @@ import subprocess
 
 from . import ctx
 from .config import secret
-from .rollout import keep_rollback, last_digest, roll_out, untagged
+from .rollout import handled, keep_rollback, roll_out, untagged
 from .scan import gate
-from .util import Result, die, log, ok, run, warn
+from .util import Result, die, log, run, warn
 
 
 def registry_auth():
@@ -50,28 +50,29 @@ def download(upstream, digest, oci_dir):
   )
 
 
-def check_upstream(entry):
-  """One pulled image."""
-  container, image, upstream = entry["container"], entry["image"], entry["upstream"]
+def check_upstream(group):
+  """One pulled image, for every container in GROUP that runs it."""
+  lead = group[0]
+  container, image, upstream = lead["container"], lead["image"], lead["upstream"]
   oci_dir = ctx.staging / container
   try:
     # Always remote against remote: a multi-arch tag's digest isn't the local image's.
     digest = upstream_digest(upstream)
   except (subprocess.CalledProcessError, ValueError, KeyError):
     raise Result("error", f"can't inspect {upstream}; trying again tomorrow")
-  if last_digest(container) == digest and ok("podman", "image", "exists", image):
+  if handled(group, digest, image):
     raise Result("unchanged", f"unchanged at {digest}")
   log(f"{container}: {upstream} is at {digest}")
   try:
     download(upstream, digest, oci_dir)
   except subprocess.CalledProcessError:
     raise Result("error", f"can't download {upstream}; trying again tomorrow")
-  gate(entry, digest, oci_dir)
+  gate(group, digest, oci_dir)
   if ctx.mode == "dry-run":
     raise Result("pass", f"would load {digest} as {image}")
   keep_rollback(image)
   run("skopeo", "copy", "--quiet", f"oci:{oci_dir}", f"containers-storage:{image}")
-  roll_out(container, image, digest)
+  return roll_out(group, image, digest)
 
 
 def build_versions(entry):
@@ -96,27 +97,29 @@ def build_candidate(entry, archive):
   return built_id
 
 
-def check_build(entry):
+def check_build(group):
   """One image built here, ending like check_upstream. The build script takes `versions`
   (print every input it builds from: commits, base image digests) and `build TAG` (build
   localhost/BUILD:TAG from them)."""
-  container, image = entry["container"], entry["image"]
+  lead = group[0]
+  container, image = lead["container"], lead["image"]
   archive = ctx.staging / f"{container}.tar"
   try:
-    versions = build_versions(entry)
+    versions = build_versions(lead)
   except subprocess.CalledProcessError:
-    raise Result("error", f"can't resolve {entry['build']}'s build inputs; trying again tomorrow")
-  if last_digest(container) == versions and ok("podman", "image", "exists", image):
+    raise Result("error", f"can't resolve {lead['build']}'s build inputs; trying again tomorrow")
+  if handled(group, versions, image):
     raise Result("unchanged", f"unchanged at {versions}")
   log(f"{container}: building {versions}")
-  built_id = build_candidate(entry, archive)
-  gate(entry, versions, archive)
+  built_id = build_candidate(lead, archive)
+  gate(group, versions, archive)
   if ctx.mode == "dry-run":
     raise Result("pass", f"would tag {versions} as {image}")
   keep_rollback(image)
   run("podman", "tag", built_id, image)
-  roll_out(container, image, versions)
+  return roll_out(group, image, versions)
 
 
-def check(entry):
-  return check_upstream if "upstream" in entry else check_build
+def check(group):
+  """GROUP: the entries sharing one image, which agree on how it's made."""
+  return check_upstream(group) if "upstream" in group[0] else check_build(group)

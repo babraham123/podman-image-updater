@@ -409,6 +409,105 @@ class BuiltImage(UpdaterTest):
     self.assertIsNone(self.loaded("localhost/app:candidate"))
 
 
+CROWDSEC = "localhost/crowdsecurity/crowdsec:latest"
+
+
+class SharedImage(UpdaterTest):
+  """Two containers on one image, which one `podman auto-update` restarts in no set order."""
+
+  def setUp(self):
+    super().setUp()
+    self.config["images"] = [
+      {"container": c, "image": CROWDSEC, "upstream": "docker.io/crowdsecurity/crowdsec:latest"}
+      for c in ("crowdsec", "crowdsec_appsec")
+    ]
+    for c in ("crowdsec", "crowdsec_appsec"):
+      self.quadlet(c)
+    self.upstream("docker.io/crowdsecurity/crowdsec:latest", "sha256:new")
+    self.image(CROWDSEC)
+
+  def auto_update(self, rc=0, **units):
+    """The next auto-update's exit status and report, {container: Updated}."""
+    report = [{"Unit": f"{c}.service", "Updated": u} for c, u in units.items()]
+    self.fake_file("auto_update.json", json.dumps(report))
+    self.fake_file("auto_update_rc", str(rc))
+
+  def test_one_download_scan_rollback_tag_and_auto_update_for_both(self):
+    self.auto_update(crowdsec=True, crowdsec_appsec=True)
+    self.assertEqual(self.run_updater(), 0, self.output)
+    self.assertEqual(len(self.calls("skopeo copy --quiet docker://")), 1)
+    self.assertEqual(len(self.scans()), 1)
+    self.assertEqual(
+      self.calls(f"podman tag {CROWDSEC} "),
+      [f"podman tag {CROWDSEC} localhost/crowdsecurity/crowdsec:rollback"],
+    )
+    self.assertEqual(self.loaded("localhost/crowdsecurity/crowdsec:rollback"), "old")
+    self.assertEqual(len(self.calls("podman auto-update")), 1)
+    self.assertEqual(self.state("crowdsec"), "sha256:new updated\n")
+    self.assertEqual(self.state("crowdsec_appsec"), "sha256:new updated\n")
+    metrics = self.metrics()
+    self.assertEqual(metrics['image_updater_images{result="checked"}'], "2")
+    self.assertEqual(metrics['image_updater_images{result="updated"}'], "2")
+    # Handled for both, so left alone the next night
+    self.assertEqual(self.run_updater(), 0, self.output)
+    self.assertEqual(self.calls("skopeo copy"), [])
+    self.assertIn("crowdsec_appsec: unchanged at sha256:new", self.output)
+
+  def test_a_failure_on_one_rolls_back_and_records_both_as_failed(self):
+    # The sibling either started on the new image before the failure, or found podman had
+    # already put the old one back and stayed on it.
+    for sibling in (True, False):
+      with self.subTest(sibling=sibling):
+        shutil.rmtree(self.var / "state", ignore_errors=True)
+        self.ntfy.posts.clear()
+        self.auto_update(rc=1, crowdsec=sibling, crowdsec_appsec="rolled back")
+        self.assertEqual(self.run_updater(), 0, self.output)
+        self.assertEqual(self.loaded(CROWDSEC), "old")
+        self.assertEqual(self.state("crowdsec"), "sha256:new failed\n")
+        self.assertEqual(self.state("crowdsec_appsec"), "sha256:new failed\n")
+        self.assertIn("systemctl restart crowdsec.service", self.calls())
+        self.assertEqual(self.posts(), [(4, "node1: crowdsec, crowdsec_appsec update failed")])
+        self.assertEqual(self.metrics()['image_updater_images{result="failed"}'], "2")
+
+  def test_a_unit_missing_from_a_failed_report_is_an_error_and_not_recorded(self):
+    self.auto_update(rc=1, crowdsec=True)
+    self.assertEqual(self.run_updater(), 1, self.output)
+    self.assertEqual(self.state("crowdsec"), "sha256:new updated\n")
+    self.assertIsNone(self.state("crowdsec_appsec"))
+    # Not retried: a second pass would tag the new image as :rollback
+    self.assertEqual(len(self.calls("podman auto-update")), 1)
+    self.assertEqual(self.posts(), [(5, "node1: Image updater broken")])
+    self.assertIn("Failed on: crowdsec_appsec.", self.ntfy.posts[0]["body"])
+    metrics = self.metrics()
+    self.assertEqual(metrics['image_updater_images{result="error"}'], "1")
+    self.assertEqual(metrics['image_updater_images{result="updated"}'], "1")
+
+  def test_a_unit_missing_from_a_clean_report_is_loaded(self):
+    self.auto_update(crowdsec=True)
+    self.assertEqual(self.run_updater(), 0, self.output)
+    self.assertEqual(self.state("crowdsec_appsec"), "sha256:new loaded\n")
+
+  def test_another_units_failure_leaves_these_judged_by_their_own_entries(self):
+    self.auto_update(rc=1, crowdsec=True, crowdsec_appsec=False, other="failed")
+    self.assertEqual(self.run_updater(), 0, self.output)
+    self.assertEqual(self.loaded(CROWDSEC), f"oci:{self.var}/staging/crowdsec")
+    self.assertEqual(self.state("crowdsec"), "sha256:new updated\n")
+    self.assertEqual(self.state("crowdsec_appsec"), "sha256:new current\n")
+    self.assertEqual(self.posts(), [])
+
+  def test_blocked_image_marks_both_containers(self):
+    self.fake_file("rc", "3")
+    self.fake_file("report.json", json.dumps(REPORT))
+    self.assertEqual(self.run_updater(), 0, self.output)
+    self.assertEqual(len(self.scans()), 1)
+    metrics = self.metrics()
+    self.assertEqual(metrics['image_updater_images{result="blocked"}'], "2")
+    for c in ("crowdsec", "crowdsec_appsec"):
+      self.assertEqual(
+        metrics[f'image_updater_blocked_days{{container="{c}",cves="CVE-2026-1, CVE-2026-2"}}'], "0"
+      )
+
+
 class Install(UpdaterTest):
   def setUp(self):
     super().setUp()
@@ -495,6 +594,13 @@ class Config(UpdaterTest):
     self.config["images"][0]["build"] = "web"
     self.assertEqual(self.run_updater(), 1)
     self.assertIn("images[0]: needs one of upstream or build", self.output)
+
+  def test_containers_on_one_image_must_agree_on_where_it_comes_from(self):
+    self.config["images"].append(
+      dict(NGINX, container="web2", upstream="docker.io/library/nginx:mainline")
+    )
+    self.assertEqual(self.run_updater(), 1)
+    self.assertIn("images[1]: upstream differs from web's, on the same image", self.output)
 
   def test_unknown_key(self):
     self.config["ntfy_url"] = "http://x"

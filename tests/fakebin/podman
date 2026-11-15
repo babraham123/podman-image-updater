@@ -1,14 +1,17 @@
 #!/bin/sh
 # Fake podman over $FAKE/images/<image key>, one file per tag holding the source the image
 # came from; tags holding the same source are one image. auto-update prints
-# $FAKE/auto_update.json, default [].
+# $FAKE/auto_update.json, default [], and exits with $FAKE/auto_update_rc, default 0.
 echo "podman $*" >> "$FAKE/calls"
 key() { printf %s "$1" | tr '/:@' '___'; }
 case "$1 $2" in
   "image exists") [ -f "$FAKE/images/$(key "$3")" ] ;;
   "image inspect") echo '[{"Id": "built123"}]' ;;
   "image prune") ;;
-  "auto-update --format") cat "$FAKE/auto_update.json" 2> /dev/null || echo '[]' ;;
+  "auto-update --format")
+    cat "$FAKE/auto_update.json" 2> /dev/null || echo '[]'
+    exit "$(cat "$FAKE/auto_update_rc" 2> /dev/null || echo 0)"
+    ;;
   "save -o") touch "$3" ;;
   "untag "*)
     if [ $# -gt 2 ]; then

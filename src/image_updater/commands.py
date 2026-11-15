@@ -16,26 +16,36 @@ from .util import Result, die, log, ok, run, warn
 RETRY_DELAY_S = 60
 
 
-def attempt(check, entry):
-  """Runs one image's check and returns its outcome, or broken if it failed. One image's
-  failure doesn't end the run. An error (a registry or build input lookup that failed,
-  before anything changed) is tried again twice, a minute apart, so a blip doesn't cost
-  the night."""
-  container = entry["container"]
+def by_image(entries):
+  """Entries grouped by the image they share, each group where its image first appears."""
+  groups = {}
+  for entry in entries:
+    groups.setdefault(entry["image"], []).append(entry)
+  return list(groups.values())
+
+
+def attempt(group):
+  """Runs one image's check and returns {container: outcome} for every container in GROUP,
+  all broken if it failed. One image's failure doesn't end the run. An error raised before
+  anything changed (a registry or build input lookup) is tried again twice, a minute apart,
+  so a blip doesn't cost the night. One from the rollout isn't: :rollback has moved."""
+  containers = [e["container"] for e in group]
   for try_ in range(3):
+    retry = False
     try:
-      check(entry)
-      outcome = "broken"
-      log(f"{container}: ended without an outcome")
+      results = check(group) or dict.fromkeys(
+        containers, Result("broken", "ended without an outcome")
+      )
     except Result as r:
-      outcome = r.outcome
+      results, retry = dict.fromkeys(containers, r), r.outcome == "error"
+    except Exception as e:
+      results = dict.fromkeys(containers, Result("broken"))
+      log(f"error: {e}", sys.stderr)
+    for container, r in results.items():
       if r.message:
         log(f"{container}: {r.message}")
-    except Exception as e:
-      outcome = "broken"
-      log(f"error: {e}", sys.stderr)
-    if outcome != "error" or try_ == 2:
-      return outcome
+    if not retry or try_ == 2:
+      return {container: r.outcome for container, r in results.items()}
     time.sleep(RETRY_DELAY_S)
 
 
@@ -84,24 +94,27 @@ def update_all():
     notify(5, "Image updater broken", "Trivy DB refresh failed, so nothing was checked.")
     finish(False, count)
   started, broken = time.monotonic(), []
-  for entry in ctx.cfg["images"]:
-    container = entry["container"]
-    if not (Path(ctx.cfg["quadlet_dir"]) / f"{container}.container").is_file():
-      continue
+  installed = [
+    e
+    for e in ctx.cfg["images"]
+    if (Path(ctx.cfg["quadlet_dir"]) / f"{e['container']}.container").is_file()
+  ]
+  for group in by_image(installed):
     if not dry and ctx.cfg["deadline_s"] and time.monotonic() - started > ctx.cfg["deadline_s"]:
-      log(f"{container}: past the deadline, left for tomorrow")
-      count["deferred"] += 1
+      for entry in group:
+        log(f"{entry['container']}: past the deadline, left for tomorrow")
+      count["deferred"] += len(group)
       continue
-    count["checked"] += 1
-    outcome = attempt(check(entry), entry)
-    if outcome in ("updated", "blocked", "failed"):
-      count[outcome] += 1
-    # An error that outlasted its retries is broken too: expired registry credentials
-    # would otherwise stop every update without an age alert ever firing.
-    elif outcome in ("error", "broken"):
-      count[outcome] += 1
-      broken.append(container)
-      warn(f"{container}: pipeline {outcome}")
+    count["checked"] += len(group)
+    for container, outcome in attempt(group).items():
+      if outcome in ("updated", "blocked", "failed"):
+        count[outcome] += 1
+      # An error that outlasted its retries is broken too: expired registry credentials
+      # would otherwise stop every update without an age alert ever firing.
+      elif outcome in ("error", "broken"):
+        count[outcome] += 1
+        broken.append(container)
+        warn(f"{container}: pipeline {outcome}")
   if dry:
     if broken:
       die(f"broken: {' '.join(broken)}")
@@ -119,20 +132,17 @@ def update_all():
 def install_images(service):
   """Every image of SERVICE is loaded and passed the scan gate before its quadlets are
   copied, or the install stops here."""
-  ready = False
-  for entry in ctx.cfg["images"]:
-    if entry["service"] != service:
-      continue
-    if not ready:
-      ctx.auth = registry_auth()
-      if not trivy_refresh():
-        die("Trivy DB refresh failed")
-      ready = True
-    outcome = attempt(check(entry), entry)
-    if outcome == "blocked":
-      die(f"{entry['container']}: blocked by the scan gate")
-    if outcome not in ("unchanged", "loaded"):
-      die(f"{entry['container']}: {outcome}")
+  groups = by_image(e for e in ctx.cfg["images"] if e["service"] == service)
+  if groups:
+    ctx.auth = registry_auth()
+    if not trivy_refresh():
+      die("Trivy DB refresh failed")
+  for group in groups:
+    for container, outcome in attempt(group).items():
+      if outcome == "blocked":
+        die(f"{container}: blocked by the scan gate")
+      if outcome not in ("unchanged", "loaded"):
+        die(f"{container}: {outcome}")
 
 
 def accept(container):

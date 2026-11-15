@@ -6,6 +6,8 @@ For each image, in config order, `image_updater` compares the upstream digest wi
 handled, downloads a changed one by digest and scans it with Trivy. If the scan passes, it tags the
 current image `:rollback`, loads the new one as `localhost/NAME` and runs `podman auto-update`; a
 failed update rolls back to `:rollback`. Images built on the host go through the same gate.
+Containers that share an image go through this once together: one `podman auto-update` restarts
+them all, and if any of them fails, every one goes back to `:rollback` and is recorded as failed.
 
 The `image_updater` package in `src/` uses only the Python 3 standard library and ships as one
 executable [zipapp](https://docs.python.org/3/library/zipapp.html), so it runs on a bare host.
@@ -80,7 +82,8 @@ All modes run as root. Options `--config FILE` (default `$IMAGE_UPDATER_CONFIG` 
 The nightly run exits 1 if an image breaks, fails after two retries a minute apart, or if the
 Trivy DB refresh fails. Blocked or rolled-back images count as a clean run.
 
-`accept` rescans, prints findings, records the digest, and notifies; the next run loads it. For a
+`accept` rescans, prints findings, records the digest, and notifies; the next run loads it, for
+every container on that image. For a
 built image it builds, scans and records the build inputs, so the next build of the same inputs
 passes. Keep it off any remote dispatcher: only a person who has read the findings should run it.
 
@@ -108,7 +111,7 @@ Each image:
 | Key | Meaning |
 | --- | --- |
 | `container` | Quadlet and unit name: `<quadlet_dir>/<container>.container`, `<container>.service` |
-| `image` | The `localhost/` name its quadlet's `Image=` uses |
+| `image` | The `localhost/` name its quadlet's `Image=` uses; containers sharing one must agree on `upstream`, `build`, `build_script` and `trivyignore` |
 | `upstream` | Pulled: full ref with registry host (`docker.io/library/nginx:stable`) |
 | `build`, `build_script` | Built on the host instead: the image name and the script that builds it |
 | `service` | The group `install SERVICE` loads together; default the container |

@@ -23,6 +23,9 @@ DEFAULTS = {
   "quadlet_dir": "/etc/containers/systemd",
   "path": "/usr/sbin:/usr/bin:/sbin:/bin",
 }
+# Containers on one image are checked, scanned and rolled out together from the first one's
+# entry, so they must agree on these.
+SHARED_KEYS = ("upstream", "build", "build_script", "trivyignore")
 
 
 def check_secret(spec, where):
@@ -83,13 +86,17 @@ def load_config(path, host):
   if unknown:
     die(f"{path}: unknown keys {', '.join(sorted(unknown))}")
   config = {**DEFAULTS, **data}
-  containers = set()
+  containers, by_image = set(), {}
   for n, entry in enumerate(config["images"]):
     check_image(entry, f"{path}: images[{n}]")
     entry.setdefault("service", entry["container"])
     if entry["container"] in containers:
       die(f"{path}: images[{n}]: container {entry['container']} is listed twice")
     containers.add(entry["container"])
+    first = by_image.setdefault(entry["image"], entry)
+    for key in SHARED_KEYS:
+      if entry.get(key) != first.get(key):
+        die(f"{path}: images[{n}]: {key} differs from {first['container']}'s, on the same image")
   if config["ntfy"] is not None:
     if not isinstance(config["ntfy"].get("url"), str):
       die(f"{path}: ntfy needs url")
